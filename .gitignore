@@ -43,3 +43,10 @@ Thumbs.db
 Manifest.toml.bak
 *.jl.cov
 *.jl.mem
+
+# The authors' reproducibility repository, cloned locally for reference.
+# Not vendored: it is third-party MIT code with its own DOI and its own .git,
+# which nested inside ours would confuse every git command run at the root.
+# Clone it yourself when you need it:
+#   git clone https://github.com/ranocha/2023_FSAL_relaxation.git
+2023_FSAL_relaxation/
