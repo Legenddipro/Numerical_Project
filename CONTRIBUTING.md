@@ -1,37 +1,79 @@
 # Working agreement
 
-This document is the single source of truth for who owns what. Its purpose is to make
-merge conflicts structurally impossible rather than merely unlikely.
+This document is the single source of truth for who owns what.
+
+**We are working sequentially**, following [docs/PLAN_SEQUENTIAL.md](docs/PLAN_SEQUENTIAL.md):
+exactly one person implements at a time, on one shared branch, and each step is verified
+before handoff. That plan is self-contained — this file records ownership, gates and
+traps; the plan records the order and the checks.
 
 ## The one rule
 
 **One owner per file. Two people never edit the same file.**
 
-If you need a change in someone else's file, open an issue or ask them — do not edit it
-yourself. The only exception is the Phase 0 interface contract, which the whole team
-agrees together in a single session.
+If you need a change in someone else's file, ask them — do not edit it yourself. The one
+exception is the interface contract (step 0), which the whole team agrees together in a
+single session.
 
+Working sequentially does not make this rule redundant. It means nobody *should* be in
+your file at the same time as you; the ownership rule means that even if the sequence
+slips, two people are not editing the same lines.
 
 ## File ownership
 
-*Proposed assignment — confirm or swap in the Phase 0 session, then treat as fixed.*
-
-| Owner | Files | Notes |
+| Owner | Files | Steps |
 |---|---|---|
-| Prachurja Dhar (lead) | `src/problems.py`, repo config, `README.md` | Also: all PR reviews and merges, Julia reference generation, final report assembly |
-| MD. Abir Hossain | `src/tableaus.py`, `src/stepping.py` | Self-contained numerics; no dependencies; can start immediately |
-| Asikur Rahman | `src/rootfind.py`, `src/montecarlo.py` | Root-finders take plain callables — testable with no ODE code present |
-| MD. Shadman Shafie | `src/solvers/classic.py` | baseline, naive, FSAL-R — three structurally-related loops |
-| Tousif Fahmeed Quadir | `src/solvers/rfsal.py`, `src/analysis.py` | R-FSAL is the hardest single solver; plotting once results exist |
+| Prachurja Dhar (lead) | `src/contracts.py`, `docs/ALGORITHMS.md`, `src/problems.py`, repo config, `README.md` | 1, 2, 10 (report) |
+| MD. Abir Hossain | `src/tableaus.py`, `src/stepping.py`, Julia reference table | 3, 4 |
+| MD. Shadman Shafie | `src/rootfind.py`, `src/solvers/classic.py` | 5, 6 |
+| Asikur Rahman | `src/solvers/rfsal.py`, `src/montecarlo.py` | 7, 8 |
+| Tousif Fahmeed Quadir | `src/analysis.py` | 9 |
+
+The pairings are deliberate: whoever writes the root-finder then writes the solvers that
+call it, and whoever writes R-FSAL then writes the sweep that runs it. Each person keeps
+their context instead of handing it over mid-thought.
 
 Everyone owns `tests/test_<their_module>.py` for their own modules.
+`tests/test_gates.py` holds the cross-cutting checks and belongs to the lead, since
+those span several owners' code.
+
+`docs/ALGORITHMS.md` — the pseudocode transcription of the four solver loops — is step 1,
+deliberately placed before any implementation. Its author ends up the one person who
+knows all four loops cold without having written the code, which is the closest thing to
+a reviewer this workflow retains once pull requests are gone.
+
+### Why `src/contracts.py` exists
+
+Both solver modules need the `SolverResult` type. If it lived in
+`solvers/classic.py`, then `solvers/rfsal.py` — a different owner's file — would
+have to import from it, coupling two people's work for no reason. Putting every
+shared type in one lead-owned module keeps the dependency graph one-directional:
+everything imports from `contracts`, and `contracts` imports from nothing.
+
+Changing `contracts.py` affects every module, so changes there are discussed
+first rather than made unilaterally.
 
 ## Branching
 
-- `main` is protected. No direct pushes, ever.
-- Branch per person per task: `feature/<name>-<module>`, e.g. `feature/abir-tableaus`.
-- Open a Pull Request; the lead reviews and merges.
-- Rebase or merge `main` into your branch before requesting review.
+**One shared branch (`main`). No feature branches, no pull requests.** That is only safe
+because exactly one person is working at a time.
+
+1. `git pull` before you start — never work from a stale copy.
+2. Implement only your step's files.
+3. Run your step's Verify block. Every check must pass.
+4. `git add`, `git commit`, `git push`.
+5. Post your Handoff line. **Only then** does the next person start.
+
+Never `--force` on `main`. It is the one operation that can destroy someone else's
+committed work, and nothing in this workflow requires it.
+
+Two consequences of the single branch worth stating plainly:
+
+- **Starting before the handoff causes direct collisions**, not a merge to resolve later.
+  The sequential discipline is what prevents conflicts, so it is load-bearing rather
+  than merely polite.
+- **Dropping pull requests removes the reviewer.** The Verify block is now the only
+  gate, so run every check rather than assuming it passes.
 
 ## Verification gates
 
@@ -41,12 +83,45 @@ found after the Monte Carlo runs costs the project.
 
 | Gate | When | Pass condition |
 |---|---|---|
-| **G1** | after `rootfind.py` | All four methods return the same root on toy test functions |
+| **G1** | after `rootfind.py` | All three methods return the same root on toy test functions |
 | **G2** | after baseline solver | Fixed step, halve `h` → error drops by ≈8 (BS3) / ≈32 (DP5) |
-| **G3** | after all four solvers | baseline, FSAL-R, R-FSAL have **identical integer** RHS counts; naive ≈ 4/3× (BS3), 7/6× (DP5) |
+| **G3** | after all four solvers | The RHS-count identity below holds **exactly** for every run |
 | **G4** | after relaxation works | baseline energy drifts visibly; relaxed variants hold the invariant to ~1e-15 |
 | **G5** | before Monte Carlo | Python RHS counts match the Julia reference **exactly**; errors match to several digits |
 | **G6** | during Monte Carlo | γ values cluster at 1 + O(Δt^(p-1)); outliers investigated, not ignored |
+
+### Gate G3 in detail
+
+With `s` the stage count and `c0` the startup cost, every run must satisfy, exactly:
+
+```
+baseline, FSAL-R, R-FSAL:   nf == c0 + (s-1) * (n_accept + n_reject)
+naive:                      nf == c0 + (s-1) * (n_accept + n_reject) + n_accept
+```
+
+Every *attempt* costs `s-1` evaluations, rejected attempts included, because stage 1
+is always served from the FSAL cache and a rejection restarts from the same `u_n`.
+Naive pays one extra evaluation on accepted steps only — that `+ n_accept` term **is**
+the inefficiency the paper removes, and here it is checkable as exact integer
+arithmetic rather than by eyeballing a ratio.
+
+**This gate is a within-run identity, not a cross-run comparison.** An earlier draft
+of this document demanded that baseline, FSAL-R and R-FSAL report *identical* total
+RHS counts. That is wrong, and a correct implementation would fail it. Relaxation
+shifts both the state and the time (`t_γ = t_n + γ·Δt`), so the variants follow
+slightly different trajectories from the first step onward; their step-size
+controllers then make different accept/reject decisions and their step counts
+legitimately differ.
+
+For the cross-method comparison, use `nf / n_accept` and position on the
+work-precision diagram — approximately equal, which is what the paper actually
+claims.
+
+**A wrinkle for G5:** in the authors' Julia code the two RHS evaluations inside
+`ode_determine_initdt` are *not* counted in `nf` when `dt` is auto-selected, but the
+single evaluation *is* counted when `dt` is supplied. So `c0` is a convention. Pin
+ours to match theirs before attempting G5, or it fails as an off-by-two that looks
+like a real bug.
 
 G3 and G5 are the strongest checks available — RHS counts are integers, so there is no
 "close enough" to hide behind.
@@ -69,15 +144,17 @@ the hard way.
 3. **The trivial root γ = 0** always satisfies the relaxation equation. Bracketing methods
    must exclude it; Newton started at γ₀ = 1 converges to the correct root naturally.
 
-4. **Golden-section search is a minimizer, not a root-finder.** It must operate on
-   `|r(γ)|`, not `r(γ)`. Minimizing `r(γ)²` instead limits γ accuracy to ~sqrt(eps) ≈ 1e-8
-   and visibly degrades energy conservation — run that as a deliberate side-experiment,
-   not as the primary implementation. Golden section also fails *silently* when no root
-   is bracketed, so always post-check that `|r(γ*)|` is genuinely near zero.
-
-5. **State as plain floats, not NumPy arrays.** For a 2-component state, NumPy's per-call
+4. **State as plain floats, not NumPy arrays.** For a 2-component state, NumPy's per-call
    dispatch overhead (~1 µs) dwarfs the arithmetic (~50 ns). NumPy would be roughly 20×
    slower here.
 
-6. **Never commit `results/`.** Generated data files are the second-largest source of
+5. **Never commit `results/`.** Generated data files are the second-largest source of
    merge conflicts after `__pycache__`.
+
+6. **Solve for γ through `solve_relaxation_parameter` only.** No solver assembles its
+   own residual or calls a finder directly. This project compares FSAL schemes, so
+   everything that is not an FSAL scheme must be held identical between them —
+   otherwise a difference in the results could come from the scheme under study or
+   from one solver having been configured with a different tolerance, and the two
+   could not be separated afterwards.
+

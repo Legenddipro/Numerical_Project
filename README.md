@@ -32,9 +32,9 @@ three directions:
    $E = \tfrac12\omega^2 - \tfrac{g}{L}\cos\theta$.
 
 2. **Generalized root-finding for $\gamma$.** The base paper uses a single bracketing
-   method (Algorithm 748 of Alefeld–Potra–Shi). We benchmark four:
-   Newton–Raphson, bisection, golden-section search, and Algorithm 748 — comparing
-   cost, attainable precision, and failure behaviour.
+   method (Algorithm 748 of Alefeld–Potra–Shi). We benchmark three:
+   Newton–Raphson, bisection, and Algorithm 748 — comparing cost, attainable
+   precision, and failure behaviour.
 
 3. **Monte Carlo robustness study.** Rather than a single fixed initial condition, we
    sweep many randomly sampled $(\theta_0, \omega_0)$ and report distributions of
@@ -44,20 +44,29 @@ three directions:
 
 ```
 src/
+  contracts.py       shared types: State, Problem, Tableau, RootResult, SolverResult
   problems.py        pendulum RHS, invariant, gradient, reference solution, IC sampling
   tableaus.py        BS3 and DP5 Butcher tableaus, PID controller gains
   stepping.py        PID step-size controller, error estimate, initial step-size heuristic
-  rootfind.py        Newton, bisection, golden-section, Algorithm 748
+  rootfind.py        Newton, bisection, Algorithm 748
   solvers/
     classic.py       baseline (no relaxation), naive relaxation+FSAL, FSAL-R
     rfsal.py         R-FSAL
   montecarlo.py      initial-condition sampling and sweep harness
   analysis.py        work-precision diagrams, drift plots, summary tables
-tests/               one test module per source module
+tests/               one test module per source module, plus test_gates.py
 docs/
+  PLAN.md            parallel plan — phases, timing budget, risks
+  PLAN_SEQUENTIAL.md one person at a time, verified handoffs; self-contained
   ALGORITHMS.md      pseudocode transcription of the four solver loops
 results/             generated data (not version-controlled)
+requirements.txt     minimum package versions
 ```
+
+Every module currently holds function signatures, type hints, and docstrings
+with no implementations — the interface contract. Each owner fills in bodies
+without waiting on anyone else, because what they call and what it returns is
+already fixed.
 
 ## Status
 

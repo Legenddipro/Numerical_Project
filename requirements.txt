@@ -1,0 +1,9 @@
+# Pinned floors, not exact versions: every machine must be at least this new,
+# but nobody is forced to downgrade.
+
+numpy>=1.24
+scipy>=1.4          # scipy.optimize.toms748 is Algorithm 748 (Alefeld-Potra-Shi),
+                    # the identical root-finder used by the base paper
+matplotlib>=3.5
+pandas>=2.0         # Monte Carlo result tables
+pytest>=7.0         # per-module test suites
