@@ -77,6 +77,8 @@ RELAX(u_prev, u_new) -> (γ, ok):        # src/rootfind.py, shared by all varian
     r(γ)  ← η(u_prev + γ·(u_new − u_prev)) − η(u_prev)
     solve r(γ) = 0 on the bracket [0.8, 1.2]
     ok    ← converged AND |r(γ)| ≤ residual_tol
+    if NOT ok AND |r(1)| ≤ residual_tol:        # ◄── see ADDENDUM A
+        γ, ok ← 1, true
     # NO RHS calls here — r evaluates η, never f.
     # γ = 0 always solves this; the bracket excludes it.
 ```
@@ -349,3 +351,94 @@ components are off, or both exact, something is wrong.
 **`t_γ ≠ t + dt`.** Relaxation moves the time as well as the state. Forgetting this is
 a silent error: the solution stays plausible but is compared against the reference at
 the wrong instant, which shows up only as a mysteriously large global error.
+
+---
+
+## Addenda from steps 5–6
+
+*Added by Shadman after implementing `rootfind.py` and `classic.py`. This is someone
+else's file, so these are appended as marked addenda rather than edited into the text
+above, and they arrive in a commit of their own — revert that one commit and the
+document is exactly as its author left it.*
+
+*Four things the document did not say that step 7 needs, found while writing the three
+loops it specifies. A, B and D change what R-FSAL must do; C changes what to expect
+from it.*
+
+### ADDENDUM A — the already-conserved case
+
+`RELAX` above now carries a fallback line. The reason:
+
+When the step is small enough that the invariant is conserved to round-off across the
+whole bracket, `r` has no sign change in it, so **every bracketing method reports
+failure** — yet nothing is wrong, and halving `dt` does not help, because a smaller step
+only flattens the residual further. Left alone, a tight tolerance drives the solver into
+halving forever.
+
+The authors handle this (`code.jl`, inside each solver's γ-solve): when
+`|r(γlo)| + |r(γhi)| < 10·eps()` they take γ = 1 and proceed. Ours does the equivalent
+but checks it where it can be verified — if the finder fails and `|r(1)| ≤ residual_tol`,
+then γ = 1 *is* a root to the accuracy demanded of any other answer, so
+`solve_relaxation_parameter` returns it as converged with its true residual attached.
+
+This is **not** the silent fallback to γ = 1 that DEVIATION 2 forbids. A finder may not
+invent a γ it did not compute. This returns one that passes the same independent residual
+check every successful result must pass.
+
+Two consequences worth knowing:
+
+- **The drift bound is per step, not global.** Each rescued step is guaranteed only to
+  `residual_tol`, so over thousands of steps those accumulate. A run whose finder never
+  succeeds drifts ~3e-10 rather than ~1e-15 — still six orders better than baseline, but
+  degraded rather than exact. A run with a working finder never takes this path at all:
+  instrumented across 70 (method × tableau × tolerance × finder) combinations on the
+  authors' initial condition, the fallback fired **0 times in 73,266 relaxation solves**.
+  So it is a genuine edge case and not a routine path that quietly loosens conservation
+  from `residual_tol` — worth re-measuring the same way if `residual_tol` is ever changed.
+- **It is the documented fallback PLAN_SEQUENTIAL's Trap 2 asks for** ("the bracket
+  [0.8, 1.2] can fail. Needs a documented fallback; the failure rate is a result").
+  `n_relaxation_failures` still counts every genuine failure, so the rate survives as a
+  Monte Carlo result.
+
+### ADDENDUM B — `relaxation_at_last_step` is only half-specified
+
+The pseudocode encodes the `= true` branch, and only that branch: the
+`(t + dt) if this step lands on t_end else (t + γ·dt)` line at steps 2, 3 and 4. The
+authors' `= false` switch does something different — it sets `relaxation = false` for the
+final step, skipping relaxation there entirely.
+
+`classic.py` implements the `= true` behaviour only, because the step-0 signatures carry
+no parameter for the switch. **If that was not the intent, the signature has to change in
+`contracts.py` before step 7**, so that R-FSAL and the classic three do not diverge on the
+last step of every run.
+
+### ADDENDUM C — expect `n_relax_fail = 0`, not merely "small"
+
+DEVIATION 3 gives R-FSAL the `− n_relax_fail` correction term, which invites treating a
+nonzero count as routine. On the authors' initial condition it is not: across all 70
+combinations measured at step 6, relaxation never failed once, for any of the three
+finders. So R-FSAL's identity should collapse to the baseline form there, and **a nonzero
+count on the fixed initial condition is a bug to chase, not the correction term earning
+its keep.** (Random initial conditions in the Monte Carlo sweep are a different matter —
+that is what the counter is for.)
+
+One caveat behind that number. Newton's textbook stopping rule, `|Δγ| ≤ xtol`, is
+unreachable here: `r` is a difference of two invariant values so it carries a few eps of
+absolute round-off however small the step, while `dr = ∇η·d` shrinks with the step. The
+attainable accuracy in γ is therefore `eps(η)/|dr|`, which at a tight tolerance is far
+coarser than `xtol` — measured at 2e-10 on a real BS3 step at tolerance 1e-7, against an
+`xtol` of 1e-14. Newton reaches that floor in three or four iterations and then jitters
+there, and judged by the strict rule alone it runs to `max_iter` and reports failure at a
+γ whose residual is already 2.2e-16. Before this was fixed it produced **653 spurious
+relaxation failures in a single run**. `rootfind.newton` now also stops on stagnation.
+
+### ADDENDUM D — "lands on t_end" needs a tolerance, and it must be shared
+
+The source compares with `≈`, not `==` (`if tnew ≈ tend`), so the pseudocode's "if this
+step lands on t_end" hides a tolerance. `classic.py` uses Julia's default for `≈` on
+`Float64`, `rel_tol = sqrt(eps) = 1.4901161193847656e-8`, with `abs_tol = 0`.
+
+It currently lives as a private `_TEND_RTOL` in `solvers/classic.py`. **R-FSAL must use
+the same value.** If the two solvers disagree here they land at different final times and
+their global errors stop being comparable — which is a gate G5 mismatch with no obvious
+cause. It would sit better in `contracts.py` or `stepping.py`; that is the lead's call.

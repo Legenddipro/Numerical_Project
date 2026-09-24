@@ -550,6 +550,11 @@ the three finders (a difference there means some configuration leaked into the
 comparison and the table is measuring that instead of the methods); `load_results` warns
 on an incomplete sweep rather than quietly plotting around the gap.
 
+> **Correction from step 6 — the drift claim above does not hold.** Newton's drift runs
+> 10–100× the two bracketing methods', and legitimately so; asserting
+> indistinguishability will fail a correct implementation. See ADDENDUM E below for the
+> measured numbers and what to assert instead.
+
 **Handoff:** "Figures and tables in results/. Step 10 can start."
 
 ---
@@ -595,3 +600,107 @@ G3 and G5 are the strongest checks available: `nf` is an integer, so there is no
 5. **Never commit `results/`.**
 6. **Solve for γ only through `solve_relaxation_parameter`.** No solver builds its own
    residual.
+
+---
+
+## Addenda from steps 5–6
+
+*Added by Shadman after implementing `rootfind.py` and `classic.py`. This is the lead's
+file, so these are appended as marked addenda rather than edited into the plan above, and
+they arrive in a commit of their own — revert that one commit and the document is exactly
+as its author left it. The algorithmic counterparts (A–D) are in
+[ALGORITHMS.md](ALGORITHMS.md).*
+
+### Status
+
+Steps 5 and 6 are done and pushed. Gates G1, G2, G3 and G4 pass; **G5 is outstanding and
+cannot be run** — step 4 was skipped, so `tests/data/julia_reference.csv` does not exist.
+Every step-6 check that names it was skipped for that reason and no other.
+
+| Gate | Result |
+|---|---|
+| G1 | All three finders return γ = `1.0036353182810`. Newton 4 iterations, toms748 4, bisection 45 |
+| G2 | BS3 error ratio 8.003, DP5 33.5 |
+| G3 | Exact in all 70 (method × tableau × tolerance × finder) combinations; `nf` also checked against a call-counting spy |
+| G4 | Baseline drifts 1.5e-2 … 8.7e-11; every relaxed variant holds η to ~1e-15 |
+| G5 | **Not run — no reference table** |
+
+Because G5 is the gate that stands between the port and the Monte Carlo sweep, step 8
+should not be treated as unblocked merely because steps 6 and 7 pass their own checks.
+Either step 4 gets revived before the sweep, or the report says plainly that the port was
+never checked against the authors' numbers.
+
+The cross-method gate checks live in `test_gates.py`, which is the lead's file and still
+stubbed. What steps 5–6 could establish alone — G1, G2, G3, G4 and the golden step —
+is checked in `test_rootfind.py` and `test_classic.py` instead, so a broken solver is not
+handed to step 7 while waiting for someone else's test file.
+
+### ADDENDUM E — step 9's root-finder table
+
+Two corrections to the Verify block in step 9.
+
+**Drift is not indistinguishable across the three finders**, and the difference is not a
+leak in the comparison. Newton stops at its round-off floor (see ADDENDUM C in
+ALGORITHMS.md), so its drift runs consistently 10–100× the two bracketing methods': at
+BS3 with tolerance 1e-11, Newton reaches 2.0e-13 against 2.7e-15 for both bisection and
+toms748. All three remain vastly better than baseline. Assert a *bound* — every finder
+holds η far below baseline's drift — not an equivalence.
+
+**`nf`, `n_accept` and `n_reject` are identical across all three finders**, so those
+columns carry no signal at all. Mean iterations per step and attainable drift are the
+whole table. Measured at step 6 over BS3 and DP5 at tolerances 1e-3 … 1e-11:
+
+| finder | mean iterations / step |
+|---|---|
+| Newton | 2.8 – 4.6 |
+| toms748 | 3.8 – 5.2 |
+| bisection | 31.5 – 44.1 |
+
+The expected `Newton < toms748 < bisection` ordering holds, but the first two are close
+enough that a strict inequality could flip on individual configurations. Bisection's gap
+is the headline number and is never in doubt.
+
+### ADDENDUM F — for step 7
+
+- **Call `solve_relaxation_parameter` with its default `bracket`, `xtol` and
+  `residual_tol`.** Trap 6 says no solver builds its own residual; it does not say "do not
+  retune the tolerances", and retuning them breaks the comparison just as effectively.
+  `classic.py` passes `bracket` through from its own signature and never touches the other
+  two.
+- **Use the same end-of-span tolerance** — ADDENDUM D in ALGORITHMS.md.
+- **Expect `n_relaxation_failures == 0`** on the authors' initial condition — ADDENDUM C.
+- **Measure what the extrapolation buys directly, not through the global error.** For
+  FSAL-R, `interpolate_fsal=False` does *not* give a reliably worse final error on this
+  problem — sometimes it is slightly better, because both approximations sit below the
+  method's own truncation term and the difference is lost in it. What the interpolation
+  genuinely buys is one full order in the FSAL value itself: BS3 gains 2⁴ per halving
+  against 2³, DP5 2⁶ against 2⁵, exactly Lemma 1. R-FSAL's `1/γ` extrapolation should be
+  checked the same way, against `f(u_γ)` computed directly at fixed `dt`, rather than by
+  looking at where the work-precision points land.
+
+### ADDENDUM G — for step 8
+
+Solvers raise on a run that cannot proceed, and **not only `RuntimeError`**: step-size
+collapse and the `max_steps` bound raise `RuntimeError`, `PIDController.dt_factor` raises
+`ArithmeticError`, and `initial_step_size` raises `ValueError`. The sweep's failure-row
+handler has to catch broadly, or a configuration that fails in the controller will abort
+the sweep instead of being recorded as the result it is.
+
+### ADDENDUM H — for step 10
+
+Two findings that belong in the report's "what did not work" section, which step 10 asks
+for explicitly:
+
+1. **Newton needed a stopping-rule fix to be usable at tight tolerances** (ADDENDUM C),
+   while the paper's own choice, Algorithm 748, was robust untouched. That is a direct
+   result for contribution 2, and it is the kind of thing a comparison study exists to
+   find.
+2. **Lemma 1's order gain is real but invisible in the global error** on this problem
+   (ADDENDUM F). Worth reporting as a measurement that came out weaker than the theory
+   suggests at first reading — the theory is about the FSAL value, not the solution.
+
+### Housekeeping
+
+Tests import `from src...`, so `pytest` must be run from the repository root. `README.md`
+still says running is "to be documented once the implementation lands"; it now has, for
+steps 1–3 and 5–6.
