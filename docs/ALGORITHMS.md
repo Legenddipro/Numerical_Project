@@ -51,10 +51,11 @@ Every variant wraps this.
 INITIALISE:
     t        ← t_start
     u_prev   ← u0
-    dt, f0   ← initial_step_size(problem, abstol, reltol, order)
+    dt, f0, c0 ← initial_step_size(problem, abstol, reltol, order)
     fsal_cache ← f0
     nf ← c0   ;  n_accept ← 0  ;  n_reject ← 0
-    # c0 is the startup convention agreed in step 0
+    # c0 is REPORTED, not remembered: 2 when the heuristic ran (it probes the
+    # right-hand side twice to estimate curvature), 1 when dt was supplied.
 
 MAIN LOOP:  while t < t_end:
     if t + dt > t_end:  dt ← t_end - t          # never step past the end

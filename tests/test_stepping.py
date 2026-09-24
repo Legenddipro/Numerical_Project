@@ -45,3 +45,13 @@ def test_history_shifts_only_on_accept():
 def test_initial_step_size_is_positive_and_bounded():
     """The heuristic must return a positive step no larger than the interval,
     and its accompanying f(t0, u0) must equal a direct RHS evaluation."""
+
+
+@pytest.mark.skip(reason="not yet implemented")
+def test_initial_step_size_reports_its_own_call_count():
+    """Third return value is c0: 2 when the heuristic runs, 1 when dt is given.
+
+    Verify by spying — wrap the problem's rhs in a counter and check the
+    reported number equals the calls that actually happened. A hardcoded
+    constant would pass a weaker test and then go stale silently.
+    """

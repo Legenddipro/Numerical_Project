@@ -105,10 +105,16 @@ Settle explicitly:
 - **State is `(omega, theta)`, plain floats, not NumPy arrays.** At two components
   NumPy's ~1 µs per-call dispatch overhead dwarfs the ~50 ns of arithmetic. NumPy here
   is roughly 20× slower.
-- **`c0`, the startup RHS count.** The authors do *not* count the two evaluations inside
-  their initial-step heuristic when `dt` is auto-selected, but *do* count the single one
-  when `dt` is given. Pick ours to match theirs, or step 4's comparison fails as an
-  off-by-two that looks like a real bug.
+- **`c0`, the startup RHS count — settled.** We count every call to `f` honestly,
+  including the two inside the initial-step heuristic, because the work-precision
+  diagrams should reflect real cost. `initial_step_size` *returns* its own call count
+  (2 when the heuristic runs, 1 when `dt` is supplied), so `c0` is reported rather than
+  remembered and cannot go stale.
+
+  The authors do **not** count those two when `dt` is auto-selected, but *do* count the
+  single one when `dt` is given. So at step 4's comparison, compare `nf − c0` on both
+  sides rather than `nf`. Fudging one side by a magic 2 would be worse than making the
+  convention explicit.
 
 **Handoff:** "Contract agreed. Step 1 can start."
 
@@ -242,9 +248,15 @@ accept in two stages and a step passing the error test can still fail relaxation
 Error norm: scale each component by $\text{abstol} + \text{reltol}\cdot\max(|u_i|,
 |u^{\text{prev}}_i|)$, then take the RMS. A value $\le 1$ means the step meets tolerance.
 
-`initial_step_size` returns `(dt0, f(t0,u0))` — it evaluates the RHS anyway and every
-solver needs it as its first cache entry. Recomputing it would inflate `nf` by exactly
-one, which is visible in step 6's identity check.
+`initial_step_size` returns `(dt0, f(t0,u0), n_rhs_calls)`. It evaluates the RHS anyway
+and every solver needs that value as its first cache entry; recomputing it would inflate
+`nf` by exactly one, which step 6's identity check would see.
+
+The third value is the startup count `c0` — 2 when the heuristic runs (it probes the
+right-hand side twice to estimate curvature), 1 when `dt` is supplied. Reporting it
+rather than letting solvers hardcode a constant means it cannot go stale if this
+heuristic ever changes; a stale constant would surface as a gate G3 failure that looks
+like a solver bug.
 
 ### Verify
 

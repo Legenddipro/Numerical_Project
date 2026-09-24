@@ -30,6 +30,23 @@ def test_gate_g2_convergence_order_dp5():
 
 
 @pytest.mark.skip(reason="not yet implemented")
+def test_reported_nf_equals_actual_rhs_calls():
+    """The counting is honest, for all four solvers.
+
+    Wrap the problem's rhs in a spy that increments a counter on every call,
+    run the solver, and assert `result.nf` equals the spy's count. Counting is
+    manual in the hot loop (a wrapper costs ~107ns per call against ~9ns for a
+    bare increment, which over a full sweep is minutes rather than seconds), so
+    this is what proves the manual increments were not missed.
+
+    Pairs with the G3 identity below: this says `nf` is truthful, G3 says the
+    truthful number has the right structure. Neither alone is sufficient — a
+    solver could count honestly but call `f` too often, or call correctly but
+    forget an increment.
+    """
+
+
+@pytest.mark.skip(reason="not yet implemented")
 def test_gate_g3_rhs_identity_holds_for_fsal_variants():
     """Gate G3, the strongest check available.
 

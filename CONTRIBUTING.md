@@ -117,11 +117,15 @@ For the cross-method comparison, use `nf / n_accept` and position on the
 work-precision diagram — approximately equal, which is what the paper actually
 claims.
 
-**A wrinkle for G5:** in the authors' Julia code the two RHS evaluations inside
-`ode_determine_initdt` are *not* counted in `nf` when `dt` is auto-selected, but the
-single evaluation *is* counted when `dt` is supplied. So `c0` is a convention. Pin
-ours to match theirs before attempting G5, or it fails as an off-by-two that looks
-like a real bug.
+`c0` is not a constant anyone remembers. `initial_step_size` **returns** its own call
+count — 2 when the heuristic runs, 1 when `dt` is supplied — and solvers initialise `nf`
+from it. A hardcoded value would go stale the moment that heuristic changed, and the
+resulting G3 failure would look like a solver bug rather than a bookkeeping one.
+
+**A wrinkle for G5:** the authors' Julia does *not* count the two evaluations inside
+`ode_determine_initdt` when `dt` is auto-selected, though it *does* count the single one
+when `dt` is supplied. We count all of them. So compare `nf − c0` against their numbers,
+not `nf` — otherwise G5 fails as a constant off-by-two that looks like a real bug.
 
 G3 and G5 are the strongest checks available — RHS counts are integers, so there is no
 "close enough" to hide behind.
