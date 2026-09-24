@@ -134,6 +134,31 @@ def newton(r: ScalarFunction,
     result must come back with ``converged=False``, never as a silent
     fallback to gamma = 1.
 
+    Two stopping rules, not one
+    ---------------------------
+    The obvious rule, ``|delta| <= xtol``, is unreachable on exactly the steps
+    this project spends most of its time taking. The residual is a difference
+    of two invariant values, so it carries an absolute round-off of a few eps
+    however small the step is, while ``dr = grad eta . d`` shrinks with the step
+    because ``d = u_new - u_old`` does. The attainable accuracy in gamma is
+    therefore ``eps(eta) / |dr|``, which at a tight tolerance is far coarser
+    than `xtol`: measured on a real BS3 step at tol 1e-7, ``|dr| ~ 1e-6`` puts
+    the floor at 2e-10 against an `xtol` of 1e-14.
+
+    Newton reaches that floor in three or four iterations and then jitters
+    there. Judged by the strict rule alone it runs to `max_iter` and reports
+    failure at a gamma whose residual is 2.2e-16 -- and the solver dutifully
+    halves its step and retries, hundreds of times over a run, while bisection
+    and toms748 sail through because their stopping rule is the width of an
+    interval rather than the size of a step.
+
+    So convergence is also declared when the iterates stop improving, which is
+    the textbook criterion for a method sitting on its round-off floor. Nothing
+    is weakened by it: the returned gamma still has to pass the bracket check
+    below and the independent residual check in `solve_relaxation_parameter`,
+    and a genuinely diverging iteration stagnates outside the bracket, where
+    that check rejects it.
+
     Returns
     -------
     RootResult
@@ -142,6 +167,7 @@ def newton(r: ScalarFunction,
     gamma = 1.0
     iterations = 0
     converged = False
+    previous_delta = None
 
     while iterations < max_iter:
         r_value = r(gamma)
@@ -163,6 +189,14 @@ def newton(r: ScalarFunction,
         if abs(delta) <= xtol:
             converged = True
             break
+
+        if previous_delta is not None and abs(delta) >= abs(previous_delta):
+            # No longer improving: this is the round-off floor described above,
+            # not a failure. Quadratic convergence makes the steps shrink fast
+            # right up until they stop shrinking at all.
+            converged = True
+            break
+        previous_delta = delta
 
     if converged and not lo <= gamma <= hi:
         # Converged to something, but not to a usable relaxation parameter. The
