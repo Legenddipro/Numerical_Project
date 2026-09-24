@@ -704,3 +704,105 @@ for explicitly:
 Tests import `from src...`, so `pytest` must be run from the repository root. `README.md`
 still says running is "to be documented once the implementation lands"; it now has, for
 steps 1–3 and 5–6.
+
+---
+
+## Addenda from steps 7–8
+
+*Added by Asikur after implementing `solvers/rfsal.py` and `montecarlo.py`. Appended as
+marked addenda in a commit of their own, following the convention of the step 5–6
+addenda above.*
+
+### Status
+
+| Gate | Result |
+|---|---|
+| G3 (R-FSAL) | Exact in all 24 (tableau × tolerance × finder) combinations tested, with the DEVIATION 3 term; `nf` also checked against a call-counting spy |
+| G4 (R-FSAL) | Energy held below 1e-14 on the authors' IC; ≤ 1.2e-12 over every relaxed run in the N=1000 sweep |
+| G5 | **Still not run — no `julia_reference.csv`.** A G5 test for R-FSAL is written in `test_rfsal.py` and skips itself until the file exists. Proceeded with the sweep by agreement; the report must say the port was never checked against the authors' numbers |
+| G6 | Passes — see ADDENDUM J |
+| Golden step | R-FSAL lands on `u_γ = (1.1201761, 1.5280838)` with `nf = 4`; `extrapolate_last_stage` returns `(-0.9985170, 1.1215519)`, not the `γ`-swap value |
+| Linear check | 1/γ extrapolation reproduces `f(u_{n+1})` to 1e-15 on the harmonic oscillator |
+
+Also verified: all eight `interpolate_fsal × relax_embedded × relax_main` combinations
+give distinct runs; on the authors' IC `n_relaxation_failures == 0` for every finder
+(ADDENDUM C holds for R-FSAL); the 1/γ extrapolation gains a full order over reusing
+`f(u_γ)` unmodified at fixed `dt` (ADDENDUM F's direct measurement).
+
+### ADDENDUM I — implementation notes for step 7
+
+- `rfsal.py` imports `_TEND_RTOL` and `_DT_MIN` from `classic.py` rather than copying
+  them (ADDENDUM D), so the four methods cannot drift apart on the last step.
+- `extrapolate_last_stage` is public so tests check the golden value against the exact
+  function the loop uses.
+- `relax_main=False` only changes which main solution the *error test* compares against;
+  the trajectory still continues from `u_γ`, matching the pseudocode.
+- The step-0 scaffold named Tousif as owner of `rfsal.py`; the assignment table gives
+  step 7 to Asikur, so the owner line now says so.
+
+### ADDENDUM J — sweep results and what step 9 should know
+
+**Running it:** `python -m src.montecarlo --n 1000 --seed 0 --workers 4`
+(`--estimate-only` prints the predicted time first). The full cross product with all
+three finders is 140 runs per IC — roughly 10 s per IC single-core, so N = 1000 is
+~75 min on 2 cores, not the ~12 min the plan guessed (that figure fits one finder).
+
+**CSV columns** (`montecarlo.CSV_COLUMNS`): configuration, `status` /
+`error_type` / `error_message`, every scalar of `SolverResult`, plus summaries of the
+omitted histories: `energy_drift_final`, `energy_drift_max`, `gamma_min`, `gamma_max`,
+`gamma_absdev_mean`, `gamma_absdev_max`, `mean_dt`. Baseline's `rootfinder` is `"none"`.
+`montecarlo.expected_row_count(...)` gives the complete-sweep size for `load_results`'
+incompleteness warning. No wall-time column — it would break byte-identical
+reproducibility; `estimate_runtime` does timing.
+
+**G6.** Median over ICs of mean |γ−1| falls monotonically with tolerance for every
+relaxed method, e.g. BS3 R-FSAL 9.0e-3 → 1.5e-6 and DP5 R-FSAL 1.7e-3 → 2.2e-8 from
+tol 1e-3 to 1e-9. Asserted in `test_montecarlo.py::test_gate_g6_...`.
+
+**Why rotation fails so often — with a proof.** Along the flow
+direction `d ≈ Δt·f`, the first-order term of `r(γ)` vanishes identically (the flow is
+tangent to level sets), so `r(γ) ≈ aγ + ½bγ²` with `a = O(Δt^{p+1})` and
+`b = Δt²(sin²θ + ω² cos θ)`. The root `γ = −2a/b` degenerates where `b → 0`, which needs
+`cos θ < 0` and `ω² = sin²θ / |cos θ|`. On that curve `E = (1 + c²)/(2c) ≥ 1` with
+`c = |cos θ|` — i.e. **only at or above the separatrix**, so this mechanism is confined to rotation. The failing solves look exactly
+like this: `r(1)` tiny and positive, `r(0.8)` and `r(1.2)` both negative — two roots
+inside the bracket, no sign change, so bisection and toms748 cannot start. Newton,
+starting at γ = 1, often lands on the nearby root anyway, which is why it fails 3–7×
+less often. Checked on a failing step: `sin²θ = 0.968` against `ω² cos θ = −0.937`.
+
+**Full sweep: N = 1000, seed 0, regime "both"** (648 libration, 352 rotation ICs;
+`results/mc_n1000_seed0.csv`, 140,000 rows, 76.5 min on 2 cores). Every run completed
+(`status == "ok"` on all rows); relaxed drift ≤ 1.2e-12 everywhere, baseline up to 0.19.
+
+Relaxation failures, summed over runs (runs with ≥1 failure in brackets):
+
+| method | finder | libration | rotation |
+|---|---|---|---|
+| FSAL-R | bisection / toms748 | 266 (10) | 4198 (2454) |
+| FSAL-R | Newton | 266 (10) | 1589 (564) |
+| naive | bisection / toms748 | 0 | 3262 (2405) |
+| naive | Newton | 1 (1) | 463 (434) |
+| R-FSAL | bisection / toms748 | 3 (3) | ~3495 (2542) |
+| R-FSAL | Newton | 3 (3) | 636 (551) |
+
+- **Rotation:** every one of the 352 rotation ICs hits at least one failure somewhere in its
+  configurations — the degenerate-root mechanism above. Newton fails 3–7× less often.
+- **Libration has a second, different mechanism** (13 of 648 ICs; the N=50 run happened
+  to contain none). Almost all at tol 1e-3, mostly DP5, mostly near the separatrix
+  (E ≈ 0.89–0.99): the steps are so large that γ itself reaches the bracket edges
+  (`gamma_min = 0.8`, `gamma_max = 1.2` in those rows). This is Trap 2 — the [0.8, 1.2]
+  bracket failing — and failure counts are identical across the three finders on each such
+  run, so the bracket decides it, not the finder. **FSAL-R is far more exposed than R-FSAL
+  here (266 vs 3)**, plausibly because at loose tolerance its interpolated FSAL cache is
+  the approximation that feeds the next step. Worth a line in the report.
+- One Newton-only libration failure (naive, BS3, tol 1e-8, IC 348): isolated, not
+  reproduced by the bracketing finders.
+
+G6 at N=1000 matches the smoke run (BS3 R-FSAL median |γ−1| 9.5e-3 → 1.5e-6, DP5
+1.6e-3 → 2.2e-8 across tol 1e-3 → 1e-9). Max |γ−1| sits at the bracket edge (0.2) only at
+loose tolerances — the outliers listed above, not trimmed.
+
+**Also for step 9:** median `nf` at BS3, tol 1e-6 is 612.5 (baseline), 614 (FSAL-R),
+614 (R-FSAL), 816 (naive, ≈ 4/3) with error 4.6e-5 for baseline against 2e-6 for all
+three relaxed methods — the paper's headline claim, visible directly in
+the sweep. Mean root iterations per step: Newton ~3.5, toms748 ~4.5, bisection ~42.
